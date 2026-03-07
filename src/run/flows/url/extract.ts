@@ -38,10 +38,14 @@ export async function fetchLinkContentWithBirdTip({
 export function deriveExtractionUi(extracted: ExtractedLinkContent): UrlExtractionUi {
   const extractedContentBytes = Buffer.byteLength(extracted.content, "utf8");
   const contentSizeLabel = formatBytes(extractedContentBytes);
+  const twitterStrategy =
+    extracted.diagnostics.strategy === "xurl" || extracted.diagnostics.strategy === "bird"
+      ? extracted.diagnostics.strategy
+      : null;
 
   const viaSources: string[] = [];
-  if (extracted.diagnostics.strategy === "bird") {
-    viaSources.push("bird");
+  if (twitterStrategy) {
+    viaSources.push(twitterStrategy);
   }
   if (extracted.diagnostics.strategy === "nitter") {
     viaSources.push("Nitter");
@@ -53,7 +57,7 @@ export function deriveExtractionUi(extracted: ExtractedLinkContent): UrlExtracti
 
   const footerParts: string[] = [];
   if (extracted.diagnostics.strategy === "html") footerParts.push("html");
-  if (extracted.diagnostics.strategy === "bird") footerParts.push("bird");
+  if (twitterStrategy) footerParts.push(twitterStrategy);
   if (extracted.diagnostics.strategy === "nitter") footerParts.push("nitter");
   if (extracted.diagnostics.firecrawl.used) footerParts.push("firecrawl");
   if (extracted.diagnostics.markdown.used) {

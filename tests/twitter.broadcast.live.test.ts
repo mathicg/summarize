@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLinkPreviewClient } from "../src/content/index.js";
-import { readTweetWithBird } from "../src/run/bird.js";
+import { readTweetWithPreferredClient } from "../src/run/bird.js";
 import { resolveTwitterCookies } from "../src/run/cookies/twitter.js";
 import { resolveExecutableInPath } from "../src/run/env.js";
 import { extractSlidesForSource, resolveSlideSource } from "../src/slides/index.js";
@@ -43,7 +43,8 @@ const createClient = () =>
     openaiApiKey: OPENAI_API_KEY,
     falApiKey: FAL_KEY,
     ytDlpPath: YT_DLP_PATH,
-    readTweetWithBird: ({ url, timeoutMs }) => readTweetWithBird({ url, timeoutMs, env: ENV }),
+    readTweetWithBird: ({ url, timeoutMs }) =>
+      readTweetWithPreferredClient({ url, timeoutMs, env: ENV }),
     resolveTwitterCookies: async () => {
       const res = await resolveTwitterCookies({ env: ENV });
       return {

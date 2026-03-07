@@ -11,9 +11,9 @@ import type { AssetAttachment } from "../../attachments.js";
 import type { AssetSummaryContext, SummarizeAssetArgs } from "./summary.js";
 import { createLinkPreviewClient, type ExtractedLinkContent } from "../../../content/index.js";
 import { createFirecrawlScraper } from "../../../firecrawl.js";
-import { readTweetWithBird } from "../../bird.js";
+import { readTweetWithPreferredClient } from "../../bird.js";
 import { resolveTwitterCookies } from "../../cookies/twitter.js";
-import { hasBirdCli } from "../../env.js";
+import { hasBirdCli, hasXurlCli } from "../../env.js";
 import { writeVerbose } from "../../logging.js";
 import { MAX_LOCAL_MEDIA_BYTES, MAX_LOCAL_MEDIA_LABEL } from "./media-policy.js";
 
@@ -165,11 +165,12 @@ See: https://github.com/openai/whisper for setup details`);
         })
       : null;
 
-  // Create reader for bird tweets (for completeness, not used for media)
-  const readTweetWithBirdClient = hasBirdCli(ctx.env)
-    ? ({ url, timeoutMs }: { url: string; timeoutMs: number }) =>
-        readTweetWithBird({ url, timeoutMs, env: ctx.env })
-    : null;
+  // Create reader for X tweets (for completeness, not used for media)
+  const readTweetWithBirdClient =
+    hasXurlCli(ctx.env) || hasBirdCli(ctx.env)
+      ? ({ url, timeoutMs }: { url: string; timeoutMs: number }) =>
+          readTweetWithPreferredClient({ url, timeoutMs, env: ctx.env })
+      : null;
 
   // Create link preview client for transcript resolution
   const transcriptCache =

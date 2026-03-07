@@ -87,16 +87,22 @@ vi.mock("ora", () => {
   return { default: ora };
 });
 
-describe("cli bird status line", () => {
-  it("shows bird in the status line when bird is used", async () => {
+describe("cli X status line", () => {
+  it("prefers xurl in the status line when both xurl and bird are installed", async () => {
     const root = mkdtempSync(join(tmpdir(), "summarize-bird-"));
     const binDir = join(root, "bin");
     mkdirSync(binDir, { recursive: true });
+    const xurlPath = join(binDir, "xurl");
     const birdPath = join(binDir, "bird");
+    writeFileSync(
+      xurlPath,
+      '#!/bin/sh\necho \'{"data":{"id":"1","text":"Hello from xurl","author_id":"7"},"includes":{"users":[{"id":"7","username":"xurl-user","name":"Xurl"}]}}\'\n',
+    );
     writeFileSync(
       birdPath,
       '#!/bin/sh\necho \'{"id":"1","text":"Hello from bird","author":{"username":"birdy","name":"Bird"}}\'\n',
     );
+    chmodSync(xurlPath, 0o755);
     chmodSync(birdPath, 0o755);
 
     const stdout = collectStream({ isTTY: false });
@@ -113,6 +119,6 @@ describe("cli bird status line", () => {
 
     const rawErr = stderr.getText();
     const plainErr = stripCsi(stripOsc(rawErr));
-    expect(plainErr).toContain("Bird:");
+    expect(plainErr).toContain("Xurl:");
   });
 });

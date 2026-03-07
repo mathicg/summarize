@@ -67,7 +67,11 @@ describe("daemon/summarize-progress", () => {
         { kind: ProgressKind.TranscriptDone, service, ok: false } as LinkPreviewProgressEvent,
         `${service}: transcript unavailable`,
       ],
-      [{ kind: ProgressKind.BirdStart } as LinkPreviewProgressEvent, "X: extracting tweet (bird)…"],
+      [{ kind: ProgressKind.BirdStart } as LinkPreviewProgressEvent, "X: extracting tweet…"],
+      [
+        { kind: ProgressKind.BirdStart, client: "xurl" } as LinkPreviewProgressEvent,
+        "X: extracting tweet (xurl)…",
+      ],
       [{ kind: ProgressKind.BirdDone, ok: true } as LinkPreviewProgressEvent, "X: extracted tweet"],
       [{ kind: ProgressKind.BirdDone, ok: false } as LinkPreviewProgressEvent, "X: extract failed"],
       [

@@ -28,6 +28,8 @@ export function createWebsiteProgress({
   const styleDim = (text: string) => (theme ? theme.dim(text) : text);
   const renderStatus = (label: string, detail: string) =>
     theme ? `${styleLabel(label)}${styleDim(detail)}` : `${label}${detail}`;
+  const renderTweetCliLabel = (client?: "xurl" | "bird" | null) =>
+    client === "xurl" ? "Xurl" : client === "bird" ? "Bird" : "X";
 
   const stopAll = () => {
     fetchRenderer.stop();
@@ -50,17 +52,18 @@ export function createWebsiteProgress({
 
       if (event.kind === "bird-start") {
         stopAll();
-        spinner.setText(renderStatus("Bird", ": reading tweet…"));
+        spinner.setText(renderStatus(renderTweetCliLabel(event.client), ": reading tweet…"));
         return;
       }
 
       if (event.kind === "bird-done") {
         stopAll();
+        const label = renderTweetCliLabel(event.client);
         if (event.ok && typeof event.textBytes === "number") {
-          spinner.setText(renderStatus("Bird", `: got ${formatBytes(event.textBytes)}…`));
+          spinner.setText(renderStatus(label, `: got ${formatBytes(event.textBytes)}…`));
           return;
         }
-        spinner.setText(renderStatus("Bird", ": failed; fallback…"));
+        spinner.setText(renderStatus(label, ": failed; fallback…"));
         return;
       }
 

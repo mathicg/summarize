@@ -121,8 +121,14 @@ export type LinkPreviewProgressEvent =
     }
   | { kind: "nitter-start"; url: string }
   | { kind: "nitter-done"; url: string; ok: boolean; textBytes: number | null }
-  | { kind: "bird-start"; url: string }
-  | { kind: "bird-done"; url: string; ok: boolean; textBytes: number | null };
+  | { kind: "bird-start"; url: string; client?: "xurl" | "bird" | null }
+  | {
+      kind: "bird-done";
+      url: string;
+      client?: "xurl" | "bird" | null;
+      ok: boolean;
+      textBytes: number | null;
+    };
 
 export interface FirecrawlScrapeResult {
   markdown: string;
@@ -147,7 +153,7 @@ export type BirdTweetMedia = {
   kind: "video" | "audio";
   urls: string[];
   preferredUrl: string | null;
-  source: "extended_entities" | "card" | "entities";
+  source: "extended_entities" | "card" | "entities" | "xurl";
 };
 
 export type BirdTweetPayload = {
@@ -156,6 +162,7 @@ export type BirdTweetPayload = {
   author?: { username?: string; name?: string };
   createdAt?: string;
   media?: BirdTweetMedia | null;
+  client?: "xurl" | "bird";
 };
 
 export type ReadTweetWithBird = (args: {

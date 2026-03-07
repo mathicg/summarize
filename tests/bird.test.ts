@@ -2,16 +2,21 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readTweetWithBird, withBirdTip } from "../src/run/bird.js";
+import {
+  readTweetWithBird,
+  readTweetWithPreferredClient,
+  readTweetWithXurl,
+  withBirdTip,
+} from "../src/run/bird.js";
 import { BIRD_TIP } from "../src/run/constants.js";
 
-const makeBirdScript = (script: string) => {
-  const root = mkdtempSync(join(tmpdir(), "summarize-bird-"));
+const makeCliScript = (binary: "bird" | "xurl", script: string) => {
+  const root = mkdtempSync(join(tmpdir(), `summarize-${binary}-`));
   const binDir = join(root, "bin");
   mkdirSync(binDir, { recursive: true });
-  const birdPath = join(binDir, "bird");
-  writeFileSync(birdPath, script, "utf8");
-  chmodSync(birdPath, 0o755);
+  const cliPath = join(binDir, binary);
+  writeFileSync(cliPath, script, "utf8");
+  chmodSync(cliPath, 0o755);
   return { root, binDir };
 };
 
@@ -20,8 +25,8 @@ const scriptForJson = (payload: unknown) => {
   return `#!/bin/sh\necho '${json}'\n`;
 };
 
-describe("bird helpers", () => {
-  it("reads tweets and extracts media from extended entities", async () => {
+describe("tweet CLI helpers", () => {
+  it("reads tweets and extracts media from bird extended entities", async () => {
     const payload = {
       id: "1",
       text: "Hello from bird",
@@ -54,13 +59,14 @@ describe("bird helpers", () => {
         },
       },
     };
-    const { binDir } = makeBirdScript(scriptForJson(payload));
+    const { binDir } = makeCliScript("bird", scriptForJson(payload));
     const result = await readTweetWithBird({
       url: "https://x.com/user/status/123",
       timeoutMs: 1000,
       env: { PATH: binDir },
     });
 
+    expect(result.client).toBe("bird");
     expect(result.text).toBe("Hello from bird");
     expect(result.media?.source).toBe("extended_entities");
     expect(result.media?.kind).toBe("audio");
@@ -68,103 +74,140 @@ describe("bird helpers", () => {
     expect(result.media?.urls).toContain("https://video.twimg.com/low.mp4");
   });
 
-  it("extracts broadcast urls from cards when no extended media exists", async () => {
+  it("reads tweets and extracts media from xurl responses", async () => {
     const payload = {
-      id: "2",
-      text: "Card media",
-      _raw: {
-        card: {
-          legacy: {
-            binding_values: [
-              { key: "ignored", value: { string_value: "nope" } },
-              { key: "broadcast_url", value: { string_value: "https://x.com/i/broadcasts/1" } },
-            ],
-          },
+      data: {
+        id: "2",
+        text: "Hello from xurl",
+        created_at: "2026-03-07T00:00:00.000Z",
+        author_id: "99",
+        attachments: {
+          media_keys: ["7_1"],
         },
       },
+      includes: {
+        users: [{ id: "99", username: "steipete", name: "Peter" }],
+        media: [
+          { media_key: "7_2", type: "photo", url: "https://pbs.twimg.com/ignored.jpg" },
+          {
+            media_key: "7_1",
+            type: "video",
+            variants: [
+              {
+                url: "https://video.twimg.com/low.mp4",
+                content_type: "video/mp4",
+                bit_rate: 64,
+              },
+              {
+                url: "https://video.twimg.com/high.mp4",
+                content_type: "video/mp4",
+                bit_rate: 256,
+              },
+            ],
+          },
+        ],
+      },
     };
-    const { binDir } = makeBirdScript(scriptForJson(payload));
-    const result = await readTweetWithBird({
-      url: "https://twitter.com/user/status/456",
+    const { binDir } = makeCliScript("xurl", scriptForJson(payload));
+    const result = await readTweetWithXurl({
+      url: "https://x.com/steipete/status/2",
       timeoutMs: 1000,
       env: { PATH: binDir },
     });
 
-    expect(result.media?.source).toBe("card");
-    expect(result.media?.preferredUrl).toBe("https://x.com/i/broadcasts/1");
+    expect(result.client).toBe("xurl");
+    expect(result.text).toBe("Hello from xurl");
+    expect(result.author?.username).toBe("steipete");
+    expect(result.media?.source).toBe("xurl");
+    expect(result.media?.preferredUrl).toBe("https://video.twimg.com/high.mp4");
   });
 
-  it("extracts video urls from entities when no card is present", async () => {
-    const payload = {
-      id: "3",
-      text: "Entities media",
-      _raw: {
-        legacy: {
-          entities: {
-            urls: [
-              { expanded_url: "https://example.com/article" },
-              { expanded_url: "https://video.twimg.com/ext.mp4" },
-            ],
-          },
-        },
-      },
-    };
-    const { binDir } = makeBirdScript(scriptForJson(payload));
-    const result = await readTweetWithBird({
-      url: "https://x.com/user/status/789",
+  it("prefers xurl when both CLIs are installed and falls back to bird on xurl failure", async () => {
+    const root = mkdtempSync(join(tmpdir(), "summarize-tweet-cli-"));
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+
+    writeFileSync(join(binDir, "xurl"), '#!/bin/sh\necho "xurl boom" 1>&2\nexit 1\n', "utf8");
+    writeFileSync(
+      join(binDir, "bird"),
+      '#!/bin/sh\necho \'{"id":"3","text":"bird fallback","author":{"username":"birdy"}}\'\n',
+      "utf8",
+    );
+    chmodSync(join(binDir, "xurl"), 0o755);
+    chmodSync(join(binDir, "bird"), 0o755);
+
+    const result = await readTweetWithPreferredClient({
+      url: "https://x.com/user/status/3",
       timeoutMs: 1000,
       env: { PATH: binDir },
     });
+    expect(result.client).toBe("bird");
+    expect(result.text).toBe("bird fallback");
 
-    expect(result.media?.source).toBe("entities");
-    expect(result.media?.preferredUrl).toBe("https://video.twimg.com/ext.mp4");
+    writeFileSync(
+      join(binDir, "xurl"),
+      scriptForJson({
+        data: { id: "4", text: "xurl wins", author_id: "9" },
+        includes: { users: [{ id: "9", username: "xurl-user", name: "Xurl User" }] },
+      }),
+      "utf8",
+    );
+    chmodSync(join(binDir, "xurl"), 0o755);
+
+    const preferred = await readTweetWithPreferredClient({
+      url: "https://x.com/user/status/4",
+      timeoutMs: 1000,
+      env: { PATH: binDir },
+    });
+    expect(preferred.client).toBe("xurl");
+    expect(preferred.text).toBe("xurl wins");
   });
 
-  it("surfaces bird errors, empty output, and invalid payloads", async () => {
-    const { binDir: errorBin } = makeBirdScript('#!/bin/sh\necho "boom" 1>&2\nexit 1\n');
+  it("surfaces CLI errors, empty output, and invalid payloads", async () => {
+    const { binDir: errorBird } = makeCliScript("bird", '#!/bin/sh\necho "boom" 1>&2\nexit 1\n');
     await expect(
       readTweetWithBird({
         url: "https://x.com/user/status/1",
         timeoutMs: 1000,
-        env: { PATH: errorBin },
+        env: { PATH: errorBird },
       }),
     ).rejects.toThrow(/bird read failed: boom/);
 
-    const { binDir: emptyBin } = makeBirdScript("#!/bin/sh\n");
+    const { binDir: emptyXurl } = makeCliScript("xurl", "#!/bin/sh\n");
     await expect(
-      readTweetWithBird({
+      readTweetWithXurl({
         url: "https://x.com/user/status/1",
         timeoutMs: 1000,
-        env: { PATH: emptyBin },
+        env: { PATH: emptyXurl },
       }),
-    ).rejects.toThrow(/bird read returned empty output/);
+    ).rejects.toThrow(/xurl read returned empty output/);
 
-    const { binDir: invalidJson } = makeBirdScript('#!/bin/sh\necho "not json"\n');
+    const { binDir: invalidBird } = makeCliScript("bird", '#!/bin/sh\necho "not json"\n');
     await expect(
       readTweetWithBird({
         url: "https://x.com/user/status/1",
         timeoutMs: 1000,
-        env: { PATH: invalidJson },
+        env: { PATH: invalidBird },
       }),
     ).rejects.toThrow(/bird read returned invalid JSON/);
 
-    const { binDir: invalidPayload } = makeBirdScript(scriptForJson({ id: "1" }));
+    const { binDir: invalidXurl } = makeCliScript("xurl", scriptForJson({ data: { id: "1" } }));
     await expect(
-      readTweetWithBird({
+      readTweetWithXurl({
         url: "https://x.com/user/status/1",
         timeoutMs: 1000,
-        env: { PATH: invalidPayload },
+        env: { PATH: invalidXurl },
       }),
-    ).rejects.toThrow(/bird read returned invalid payload/);
+    ).rejects.toThrow(/xurl read returned invalid payload/);
   });
 
-  it("adds bird install tips only when needed", () => {
+  it("adds install tips only when neither xurl nor bird is available", () => {
     const baseError = new Error("nope");
     const url = "https://x.com/user/status/123";
     const tipError = withBirdTip(baseError, url, { PATH: "" });
     expect(tipError.message).toContain(BIRD_TIP);
 
-    const { binDir } = makeBirdScript("#!/bin/sh\nexit 0\n");
+    const { binDir } = makeCliScript("xurl", "#!/bin/sh\nexit 0\n");
     const noTip = withBirdTip(baseError, url, { PATH: binDir });
     expect(noTip.message).toBe(baseError.message);
 

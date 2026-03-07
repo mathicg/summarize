@@ -24,10 +24,10 @@ import {
 } from "../../../tty/theme.js";
 import { createWebsiteProgress } from "../../../tty/website-progress.js";
 import { assertAssetMediaTypeSupported } from "../../attachments.js";
-import { readTweetWithBird } from "../../bird.js";
+import { readTweetWithPreferredClient } from "../../bird.js";
 import { UVX_TIP } from "../../constants.js";
 import { resolveTwitterCookies } from "../../cookies/twitter.js";
-import { hasBirdCli, hasUvxCli } from "../../env.js";
+import { hasBirdCli, hasUvxCli, hasXurlCli } from "../../env.js";
 import {
   estimateWhisperTranscriptionCostUsd,
   formatOptionalNumber,
@@ -146,10 +146,11 @@ export async function runUrlFlow({
         })
       : null;
 
-  const readTweetWithBirdClient = hasBirdCli(io.env)
-    ? ({ url, timeoutMs }: { url: string; timeoutMs: number }) =>
-        readTweetWithBird({ url, timeoutMs, env: io.env })
-    : null;
+  const readTweetWithBirdClient =
+    hasXurlCli(io.env) || hasBirdCli(io.env)
+      ? ({ url, timeoutMs }: { url: string; timeoutMs: number }) =>
+          readTweetWithPreferredClient({ url, timeoutMs, env: io.env })
+      : null;
 
   writeVerbose(io.stderr, flags.verbose, "extract start", flags.verboseColor, io.envForRun);
   const oscProgress = createOscProgressController({

@@ -50,16 +50,17 @@ describe("tty website progress", () => {
     expect(progress).not.toBeNull();
     if (!progress) return;
 
-    progress.onProgress({ kind: "bird-start", url: "https://x.com/test/status/1" });
-    expect(setText).toHaveBeenLastCalledWith("Bird: reading tweet…");
+    progress.onProgress({ kind: "bird-start", url: "https://x.com/test/status/1", client: null });
+    expect(setText).toHaveBeenLastCalledWith("X: reading tweet…");
 
     progress.onProgress({
       kind: "bird-done",
       url: "https://x.com/test/status/1",
+      client: "xurl",
       ok: false,
       textBytes: null,
     });
-    expect(setText).toHaveBeenLastCalledWith("Bird: failed; fallback…");
+    expect(setText).toHaveBeenLastCalledWith("Xurl: failed; fallback…");
 
     progress.onProgress({ kind: "nitter-start", url: "https://x.com/test/status/1" });
     expect(setText).toHaveBeenLastCalledWith("Nitter: fetching…");

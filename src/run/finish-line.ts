@@ -22,7 +22,7 @@ export type FinishLineModel = {
 };
 
 export type ExtractDiagnosticsForFinishLine = {
-  strategy: "bird" | "firecrawl" | "html" | "nitter";
+  strategy: "bird" | "xurl" | "firecrawl" | "html" | "nitter";
   firecrawl: { used: boolean };
   markdown: { used: boolean; provider: "firecrawl" | "llm" | null; notes?: string | null };
   transcript: { textProvided: boolean; provider: string | null };
@@ -501,6 +501,7 @@ export function buildExtractFinishLabel(args: {
   if (strategy === "firecrawl" || args.extracted.diagnostics.firecrawl?.used) {
     return `${base} via firecrawl`;
   }
+  if (strategy === "xurl") return `${base} via xurl`;
   if (strategy === "bird") return `${base} via bird`;
   if (strategy === "nitter") return `${base} via nitter`;
 
@@ -513,6 +514,7 @@ export function buildSummaryFinishLabel(args: {
 }): string | null {
   const strategy = String(args.extracted.diagnostics.strategy ?? "");
   const sources: string[] = [];
+  if (strategy === "xurl") sources.push("xurl");
   if (strategy === "bird") sources.push("bird");
   if (strategy === "nitter") sources.push("nitter");
   if (strategy === "firecrawl" || args.extracted.diagnostics.firecrawl?.used) {

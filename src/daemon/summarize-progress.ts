@@ -51,7 +51,7 @@ export function formatProgress(event: LinkPreviewProgressEvent): string | null {
         ? `${event.service}: transcript ready`
         : `${event.service}: transcript unavailable`;
     case ProgressKind.BirdStart:
-      return "X: extracting tweet (bird)…";
+      return event.client ? `X: extracting tweet (${event.client})…` : "X: extracting tweet…";
     case ProgressKind.BirdDone:
       return event.ok ? "X: extracted tweet" : "X: extract failed";
     case ProgressKind.NitterStart:

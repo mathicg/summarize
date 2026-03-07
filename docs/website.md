@@ -33,6 +33,7 @@ Daemon note:
 ## Twitter/X
 
 - Tweet audio transcription runs only with `--video-mode transcript` (auto mode skips yt-dlp for tweets).
+- Tweet text extraction prefers `xurl` when installed, falls back to `bird`, then Nitter.
 
 ## Flags
 

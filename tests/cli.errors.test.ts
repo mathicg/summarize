@@ -154,7 +154,7 @@ describe("cli error handling", () => {
     expect(stdoutText).toContain("A".repeat(50));
   });
 
-  it("adds a bird tip when Twitter fetch fails and bird is unavailable", async () => {
+  it("adds an X CLI tip when Twitter fetch fails and no X CLI is installed", async () => {
     const fetchMock = vi.fn(async () => new Response("nope", { status: 404 }));
 
     await expect(
@@ -164,7 +164,7 @@ describe("cli error handling", () => {
         stdout: noopStream(),
         stderr: noopStream(),
       }),
-    ).rejects.toThrow(/Tip: Install bird🐦 for better Twitter support/);
+    ).rejects.toThrow(/Tip: Install xurl \(preferred\) or bird for better X support/);
   });
 
   it("fails gracefully when Twitter content is unavailable after bird and nitter", async () => {

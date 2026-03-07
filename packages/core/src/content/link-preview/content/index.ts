@@ -370,12 +370,19 @@ export async function fetchLinkContent(
       return null;
     }
 
-    deps.onProgress?.({ kind: "bird-start", url });
+    deps.onProgress?.({ kind: "bird-start", url, client: null });
     try {
       const tweet = await deps.readTweetWithBird({ url, timeoutMs });
       const text = tweet?.text?.trim() ?? "";
+      const tweetClient = tweet?.client === "xurl" ? "xurl" : "bird";
       if (text.length === 0) {
-        deps.onProgress?.({ kind: "bird-done", url, ok: false, textBytes: null });
+        deps.onProgress?.({
+          kind: "bird-done",
+          url,
+          client: tweetClient,
+          ok: false,
+          textBytes: null,
+        });
         return null;
       }
 
@@ -431,13 +438,13 @@ export async function fetchLinkContent(
             : null,
         isVideoOnly: false,
         diagnostics: {
-          strategy: "bird",
+          strategy: tweetClient,
           firecrawl: firecrawlDiagnostics,
           markdown: {
             requested: markdownRequested,
             used: false,
             provider: null,
-            notes: "Bird tweet fetch provides plain text",
+            notes: `${tweetClient} tweet fetch provides plain text`,
           },
           transcript: transcriptDiagnostics,
         },
@@ -445,13 +452,14 @@ export async function fetchLinkContent(
       deps.onProgress?.({
         kind: "bird-done",
         url,
+        client: tweetClient,
         ok: true,
         textBytes: Buffer.byteLength(result.content, "utf8"),
       });
       return result;
     } catch (error) {
       birdError = error;
-      deps.onProgress?.({ kind: "bird-done", url, ok: false, textBytes: null });
+      deps.onProgress?.({ kind: "bird-done", url, client: null, ok: false, textBytes: null });
       return null;
     }
   };
@@ -596,10 +604,10 @@ export async function fetchLinkContent(
   });
   if (twitterStatus && isBlockedTwitterContent(htmlExtracted.content)) {
     const birdNote = !deps.readTweetWithBird
-      ? "Bird not available"
+      ? "X CLI not available"
       : birdError
-        ? `Bird failed: ${birdError instanceof Error ? birdError.message : String(birdError)}`
-        : "Bird returned no text";
+        ? `X CLI failed: ${birdError instanceof Error ? birdError.message : String(birdError)}`
+        : "X CLI returned no text";
     const nitterNote =
       nitterUrls.length > 0
         ? nitterError

@@ -1,6 +1,8 @@
 import { execFileTracked } from "../processes.js";
 import { BIRD_TIP, TWITTER_HOSTS } from "./constants.js";
-import { hasBirdCli } from "./env.js";
+import { hasBirdCli, hasXurlCli } from "./env.js";
+
+export type TweetCliClient = "xurl" | "bird";
 
 type BirdTweetPayload = {
   id?: string;
@@ -8,13 +10,14 @@ type BirdTweetPayload = {
   author?: { username?: string; name?: string };
   createdAt?: string;
   media?: BirdTweetMedia | null;
+  client?: TweetCliClient;
 };
 
 type BirdTweetMedia = {
   kind: "video" | "audio";
   urls: string[];
   preferredUrl: string | null;
-  source: "extended_entities" | "card" | "entities";
+  source: "extended_entities" | "card" | "entities" | "xurl";
 };
 
 const URL_PREFIX_PATTERN = /^https?:\/\//i;
@@ -26,6 +29,8 @@ const asArray = (value: unknown): unknown[] | null => (Array.isArray(value) ? va
 
 const asString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
+const asNumber = (value: unknown): number | null => (typeof value === "number" ? value : null);
+
 const isLikelyVideoUrl = (url: string): boolean =>
   url.includes("video.twimg.com") || url.includes("/i/broadcasts/") || url.endsWith(".m3u8");
 
@@ -34,6 +39,23 @@ const addUrl = (set: Set<string>, value: string | null) => {
   if (!URL_PREFIX_PATTERN.test(value)) return;
   set.add(value);
 };
+
+const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
+
+function parseTweetId(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^\d+$/.test(trimmed)) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (!TWITTER_HOSTS.has(host)) return null;
+    const match = parsed.pathname.match(/\/status\/(\d+)/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function extractMediaFromBirdRaw(raw: unknown): BirdTweetMedia | null {
   const root = asRecord(raw);
@@ -66,7 +88,7 @@ function extractMediaFromBirdRaw(raw: unknown): BirdTweetMedia | null {
         if (!url) continue;
         addUrl(urls, url);
         const contentType = asString(variantRecord?.content_type) ?? "";
-        const bitrate = typeof variantRecord?.bitrate === "number" ? variantRecord.bitrate : -1;
+        const bitrate = asNumber(variantRecord?.bitrate) ?? -1;
         if (contentType.includes("video/mp4") && bitrate >= preferredBitrate) {
           preferredBitrate = bitrate;
           preferredUrl = url;
@@ -134,6 +156,66 @@ function extractMediaFromBirdRaw(raw: unknown): BirdTweetMedia | null {
   return null;
 }
 
+function extractMediaFromXurlRaw(raw: unknown): BirdTweetMedia | null {
+  const root = asRecord(raw);
+  if (!root) return null;
+
+  const data = asRecord(root.data);
+  const includes = asRecord(root.includes);
+  const attachments = asRecord(data?.attachments);
+  const mediaKeys = new Set(
+    (asArray(attachments?.media_keys) ?? [])
+      .map((value) => asString(value))
+      .filter((value): value is string => Boolean(value)),
+  );
+  const mediaEntries = asArray(includes?.media) ?? [];
+  if (mediaEntries.length === 0) return null;
+
+  const urls = new Set<string>();
+  let preferredUrl: string | null = null;
+  let preferredBitrate = -1;
+  let kind: BirdTweetMedia["kind"] = "video";
+
+  for (const entry of mediaEntries) {
+    const media = asRecord(entry);
+    const mediaKey = asString(media?.media_key);
+    if (mediaKeys.size > 0 && mediaKey && !mediaKeys.has(mediaKey)) continue;
+
+    const mediaType = asString(media?.type);
+    if (mediaType !== "video" && mediaType !== "animated_gif" && mediaType !== "audio") continue;
+    if (mediaType === "audio") kind = "audio";
+
+    for (const variant of asArray(media?.variants) ?? []) {
+      const record = asRecord(variant);
+      const url = asString(record?.url);
+      if (!url) continue;
+      addUrl(urls, url);
+      const contentType = asString(record?.content_type) ?? "";
+      const bitrate = asNumber(record?.bit_rate) ?? -1;
+      if (contentType.includes("video/mp4") && bitrate >= preferredBitrate) {
+        preferredBitrate = bitrate;
+        preferredUrl = url;
+      } else if (!preferredUrl) {
+        preferredUrl = url;
+      }
+    }
+
+    const directUrl = asString(media?.url);
+    if (directUrl) {
+      addUrl(urls, directUrl);
+      if (!preferredUrl) preferredUrl = directUrl;
+    }
+  }
+
+  if (urls.size === 0) return null;
+  return {
+    kind,
+    urls: Array.from(urls),
+    preferredUrl,
+    source: "xurl",
+  };
+}
+
 function isTwitterStatusUrl(raw: string): boolean {
   try {
     const parsed = new URL(raw);
@@ -145,54 +227,184 @@ function isTwitterStatusUrl(raw: string): boolean {
   }
 }
 
+function buildXurlTweetEndpoint(tweetId: string): string {
+  const params = new URLSearchParams({
+    expansions: "author_id,attachments.media_keys",
+    "tweet.fields": "created_at,attachments,entities",
+    "user.fields": "username,name",
+    "media.fields": "type,url,preview_image_url,variants",
+  });
+  return `/2/tweets/${tweetId}?${params.toString()}`;
+}
+
+function parseXurlTweetPayload(raw: unknown): BirdTweetPayload {
+  const root = asRecord(raw);
+  const errors = asArray(root?.errors);
+  if (errors && errors.length > 0) {
+    const first = asRecord(errors[0]);
+    const message = asString(first?.message);
+    if (message) throw new Error(`xurl API error: ${message}`);
+  }
+
+  const data = asRecord(root?.data);
+  if (!data) {
+    throw new Error("xurl read returned invalid payload");
+  }
+
+  const text = asString(data.text);
+  if (!text) {
+    throw new Error("xurl read returned invalid payload");
+  }
+
+  const includes = asRecord(root?.includes);
+  const users = asArray(includes?.users) ?? [];
+  const authorId = asString(data.author_id);
+  const authorRecord =
+    users.map((entry) => asRecord(entry)).find((entry) => asString(entry?.id) === authorId) ?? null;
+
+  return {
+    id: asString(data.id) ?? undefined,
+    text,
+    author:
+      authorRecord && (asString(authorRecord.username) || asString(authorRecord.name))
+        ? {
+            username: asString(authorRecord.username) ?? undefined,
+            name: asString(authorRecord.name) ?? undefined,
+          }
+        : undefined,
+    createdAt: asString(data.created_at) ?? undefined,
+    media: extractMediaFromXurlRaw(raw),
+    client: "xurl",
+  };
+}
+
+function execTweetCli(
+  binary: string,
+  args: string[],
+  timeoutMs: number,
+  env: Record<string, string | undefined>,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const toText = (value: string | Buffer | null | undefined) =>
+      typeof value === "string" ? value : value ? value.toString("utf8") : "";
+
+    execFileTracked(
+      binary,
+      args,
+      {
+        timeout: timeoutMs,
+        env: { ...process.env, ...env },
+        maxBuffer: 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        const stdoutText = toText(stdout).trim();
+        const stderrText = stripAnsi(toText(stderr)).trim();
+        if (error) {
+          const detail = stderrText || stdoutText;
+          const suffix = detail ? `: ${detail}` : "";
+          reject(new Error(`${binary} read failed${suffix}`));
+          return;
+        }
+        resolve(stdoutText);
+      },
+    );
+  });
+}
+
+export async function readTweetWithXurl(args: {
+  url: string;
+  timeoutMs: number;
+  env: Record<string, string | undefined>;
+}): Promise<BirdTweetPayload> {
+  const tweetId = parseTweetId(args.url);
+  if (!tweetId) {
+    throw new Error("xurl read requires a tweet status URL or id");
+  }
+  const stdout = await execTweetCli(
+    "xurl",
+    [buildXurlTweetEndpoint(tweetId)],
+    args.timeoutMs,
+    args.env,
+  );
+  if (!stdout) {
+    throw new Error("xurl read returned empty output");
+  }
+  try {
+    return parseXurlTweetPayload(JSON.parse(stdout));
+  } catch (parseError) {
+    if (
+      parseError instanceof Error &&
+      (parseError.message.startsWith("xurl read returned") ||
+        parseError.message.startsWith("xurl API error"))
+    ) {
+      throw parseError;
+    }
+    const message = parseError instanceof Error ? parseError.message : String(parseError);
+    throw new Error(`xurl read returned invalid JSON: ${message}`);
+  }
+}
+
 export async function readTweetWithBird(args: {
   url: string;
   timeoutMs: number;
   env: Record<string, string | undefined>;
 }): Promise<BirdTweetPayload> {
-  return await new Promise((resolve, reject) => {
-    const toText = (value: string | Buffer | null | undefined) =>
-      typeof value === "string" ? value : value ? value.toString("utf8") : "";
+  const stdout = await execTweetCli(
+    "bird",
+    ["read", args.url, "--json-full"],
+    args.timeoutMs,
+    args.env,
+  );
+  if (!stdout) {
+    throw new Error("bird read returned empty output");
+  }
+  try {
+    const parsed = JSON.parse(stdout) as
+      | (BirdTweetPayload & { _raw?: unknown })
+      | Array<BirdTweetPayload & { _raw?: unknown }>;
+    const tweet = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!tweet || typeof tweet.text !== "string") {
+      throw new Error("bird read returned invalid payload");
+    }
+    const { _raw, ...rest } = tweet as BirdTweetPayload & { _raw?: unknown };
+    const media = extractMediaFromBirdRaw(_raw);
+    return { ...rest, media, client: "bird" };
+  } catch (parseError) {
+    if (parseError instanceof Error && parseError.message.startsWith("bird read returned")) {
+      throw parseError;
+    }
+    const message = parseError instanceof Error ? parseError.message : String(parseError);
+    throw new Error(`bird read returned invalid JSON: ${message}`);
+  }
+}
 
-    execFileTracked(
-      "bird",
-      ["read", args.url, "--json-full"],
-      {
-        timeout: args.timeoutMs,
-        env: { ...process.env, ...args.env },
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const detail = toText(stderr).trim();
-          const suffix = detail ? `: ${detail}` : "";
-          reject(new Error(`bird read failed${suffix}`));
-          return;
-        }
-        const trimmed = toText(stdout).trim();
-        if (!trimmed) {
-          reject(new Error("bird read returned empty output"));
-          return;
-        }
-        try {
-          const parsed = JSON.parse(trimmed) as
-            | (BirdTweetPayload & { _raw?: unknown })
-            | Array<BirdTweetPayload & { _raw?: unknown }>;
-          const tweet = Array.isArray(parsed) ? parsed[0] : parsed;
-          if (!tweet || typeof tweet.text !== "string") {
-            reject(new Error("bird read returned invalid payload"));
-            return;
-          }
-          const { _raw, ...rest } = tweet as BirdTweetPayload & { _raw?: unknown };
-          const media = extractMediaFromBirdRaw(_raw);
-          resolve({ ...rest, media });
-        } catch (parseError) {
-          const message = parseError instanceof Error ? parseError.message : String(parseError);
-          reject(new Error(`bird read returned invalid JSON: ${message}`));
-        }
-      },
-    );
-  });
+export async function readTweetWithPreferredClient(args: {
+  url: string;
+  timeoutMs: number;
+  env: Record<string, string | undefined>;
+}): Promise<BirdTweetPayload> {
+  const attempts: Array<[TweetCliClient, () => Promise<BirdTweetPayload>]> = [];
+  if (hasXurlCli(args.env)) {
+    attempts.push(["xurl", () => readTweetWithXurl(args)]);
+  }
+  if (hasBirdCli(args.env)) {
+    attempts.push(["bird", () => readTweetWithBird(args)]);
+  }
+
+  const errors: string[] = [];
+  for (const [client, run] of attempts) {
+    try {
+      const tweet = await run();
+      return { ...tweet, client };
+    } catch (error) {
+      errors.push(`${client}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(errors.join("; "));
+  }
+  throw new Error("No X CLI available");
 }
 
 export function withBirdTip(
@@ -200,7 +412,7 @@ export function withBirdTip(
   url: string | null,
   env: Record<string, string | undefined>,
 ): Error {
-  if (!url || !isTwitterStatusUrl(url) || hasBirdCli(env)) {
+  if (!url || !isTwitterStatusUrl(url) || hasXurlCli(env) || hasBirdCli(env)) {
     return error instanceof Error ? error : new Error(String(error));
   }
   const message = error instanceof Error ? error.message : String(error);

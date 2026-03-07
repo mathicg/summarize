@@ -35,6 +35,10 @@ export function hasBirdCli(env: Record<string, string | undefined>): boolean {
   return resolveExecutableInPath("bird", env) !== null;
 }
 
+export function hasXurlCli(env: Record<string, string | undefined>): boolean {
+  return resolveExecutableInPath("xurl", env) !== null;
+}
+
 export function hasUvxCli(env: Record<string, string | undefined>): boolean {
   if (typeof env.UVX_PATH === "string" && env.UVX_PATH.trim().length > 0) {
     return true;
