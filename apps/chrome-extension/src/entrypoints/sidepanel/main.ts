@@ -40,7 +40,6 @@ import { createModelPresetsController } from "./model-presets";
 import { createNavigationRuntime } from "./navigation-runtime";
 import { createPanelCacheController, type PanelCachePayload } from "./panel-cache";
 import { createPanelPortRuntime } from "./panel-port";
-import { mountSummarizeControl } from "./pickers";
 import {
   normalizePanelUrl,
   panelUrlsMatch,
@@ -55,9 +54,9 @@ import { shouldSeedPlannedSlidesForRun } from "./slides-seed-policy";
 import { selectMarkdownForLayout, splitSlidesMarkdown, type SlideTextMode } from "./slides-state";
 import { createSlidesSummaryController } from "./slides-summary-controller";
 import { createSlidesTextController } from "./slides-text-controller";
-import { resolveSlidesRenderLayout } from "./slides-view-policy";
 import { createSlidesViewRuntime } from "./slides-view-runtime";
 import { createStreamController } from "./stream-controller";
+import { createSummarizeControlRuntime } from "./summarize-control-runtime";
 import { createSummaryViewRuntime } from "./summary-view-runtime";
 import { registerSidepanelTestHooks } from "./test-hooks";
 import { parseTimestampHref } from "./timestamp-links";
@@ -406,38 +405,6 @@ function maybeSeedPlannedSlidesForPendingRun() {
   return false;
 }
 
-async function fetchSlideTools(requireOcr: boolean): Promise<{
-  ok: boolean;
-  missing: string[];
-}> {
-  const token = (await loadSettings()).token.trim();
-  if (!token) {
-    return { ok: false, missing: ["daemon token"] };
-  }
-  const res = await fetch("http://127.0.0.1:8787/v1/tools", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    return { ok: false, missing: ["daemon tools endpoint"] };
-  }
-  const json = (await res.json()) as {
-    ok?: boolean;
-    tools?: {
-      ytDlp?: { available?: boolean };
-      ffmpeg?: { available?: boolean };
-      tesseract?: { available?: boolean };
-    };
-  };
-  if (!json.ok || !json.tools) {
-    return { ok: false, missing: ["daemon tools endpoint"] };
-  }
-  const missing: string[] = [];
-  if (!json.tools.ytDlp?.available) missing.push("yt-dlp");
-  if (!json.tools.ffmpeg?.available) missing.push("ffmpeg");
-  if (requireOcr && !json.tools.tesseract?.available) missing.push("tesseract");
-  return { ok: missing.length === 0, missing };
-}
-
 function showAutomationNotice({
   title,
   message,
@@ -553,107 +520,26 @@ renderEl.addEventListener("click", (event) => {
   void send({ type: "panel:seek", seconds });
 });
 
-async function handleSummarizeControlChange(value: { mode: "page" | "video"; slides: boolean }) {
-  const prevSlides = slidesEnabledValue;
-  const prevMode = inputMode;
-  if (value.slides && !slidesEnabledValue) {
-    const tools = await fetchSlideTools(slidesOcrEnabledValue);
-    if (!tools.ok) {
-      const missing = tools.missing.join(", ");
-      showSlideNotice(`Slide extraction requires ${missing}. Install and restart the daemon.`);
-      refreshSummarizeControl();
-      return;
-    }
-    hideSlideNotice();
-  } else if (!value.slides) {
-    hideSlideNotice();
-    setSlidesBusy(false);
-    stopSlidesStream();
-  }
-  inputMode = value.mode;
-  inputModeOverride = value.mode;
-  slidesEnabledValue = value.slides;
-  await patchSettings({ slidesEnabled: slidesEnabledValue });
-  if (slidesEnabledValue && (inputModeOverride ?? inputMode) === "video") {
-    maybeApplyPendingSlidesSummary();
-    maybeStartPendingSlidesForUrl(activeTabUrl ?? null);
-  }
-  if (autoValue && (value.mode !== prevMode || value.slides !== prevSlides)) {
-    sendSummarize({ refresh: true });
-  }
-  refreshSummarizeControl();
-}
+let summarizeControlRuntime: ReturnType<typeof createSummarizeControlRuntime> | null = null;
 
-function handleSlidesTextModeChange(next: SlideTextMode) {
-  if (next === "ocr" && !slidesOcrEnabledValue) return;
-  if (!slidesTextController.setTextMode(next)) return;
-  if (panelState.summaryMarkdown) {
-    renderInlineSlides(renderMarkdownHostEl, { fallback: true });
-  } else {
-    queueSlidesRender();
-  }
-  refreshSummarizeControl();
+async function handleSummarizeControlChange(value: { mode: "page" | "video"; slides: boolean }) {
+  await summarizeControlRuntime?.handleSummarizeControlChange(value);
 }
 
 function retrySlidesStream() {
-  if (!slidesEnabledValue) return;
-  hideSlideNotice();
-  const runId = resolveActiveSlidesRunId();
-  const targetUrl = panelState.currentSource?.url ?? activeTabUrl ?? null;
-  if (runId) {
-    startSlidesStreamForRunId(runId);
-    startSlidesSummaryStreamForRunId(runId, targetUrl);
-    return;
-  }
-  sendSummarize({ refresh: true });
+  summarizeControlRuntime?.retrySlidesStream();
 }
 
 function applySlidesLayout() {
-  renderMarkdownHostEl.classList.remove("hidden");
-  renderSlidesHostEl.dataset.layout = resolveSlidesRenderLayout({
-    preferredLayout: slidesLayoutValue,
-    slidesEnabled: slidesEnabledValue,
-    inputMode: inputModeOverride ?? inputMode,
-  });
-  renderMarkdownDisplay();
-  slidesRenderer?.applyLayout();
+  summarizeControlRuntime?.applySlidesLayout();
 }
 
 function setSlidesLayout(next: SlidesLayout) {
-  if (next === slidesLayoutValue) return;
-  slidesLayoutValue = next;
-  slidesLayoutEl.value = next;
-  applySlidesLayout();
+  summarizeControlRuntime?.setSlidesLayout(next);
 }
 
-const summarizeControl = mountSummarizeControl(summarizeControlRoot, {
-  mode: inputMode,
-  slidesEnabled: slidesEnabledValue,
-  mediaAvailable: false,
-  videoLabel: "Video",
-  busy: false,
-  slidesTextMode: slidesTextController.getTextMode(),
-  slidesTextToggleVisible: slidesTextController.getTextToggleVisible(),
-  onSlidesTextModeChange: handleSlidesTextModeChange,
-  onChange: handleSummarizeControlChange,
-  onSummarize: () => sendSummarize(),
-});
-
 function refreshSummarizeControl() {
-  summarizeControl.update({
-    mode: inputMode,
-    slidesEnabled: slidesEnabledValue,
-    mediaAvailable,
-    busy: slidesBusy,
-    videoLabel: summarizeVideoLabel,
-    pageWords: summarizePageWords,
-    videoDurationSeconds: summarizeVideoDurationSeconds,
-    slidesTextMode: slidesTextController.getTextMode(),
-    slidesTextToggleVisible: slidesTextController.getTextToggleVisible(),
-    onSlidesTextModeChange: handleSlidesTextModeChange,
-    onChange: handleSummarizeControlChange,
-    onSummarize: () => sendSummarize(),
-  });
+  summarizeControlRuntime?.refreshSummarizeControl();
 }
 
 const isStreaming = () => panelState.phase === "connecting" || panelState.phase === "streaming";
@@ -1674,6 +1560,68 @@ const interactionRuntime = createSidepanelInteractionRuntime({
 });
 const { sendSummarize, sendChatMessage, bumpFontSize, bumpLineHeight, persistCurrentModel } =
   interactionRuntime;
+
+summarizeControlRuntime = createSummarizeControlRuntime({
+  summarizeControlRoot,
+  renderMarkdownHostEl,
+  renderSlidesHostEl,
+  slidesLayoutEl,
+  slidesTextController,
+  getState: () => ({
+    inputMode,
+    inputModeOverride,
+    hasSummaryMarkdown: Boolean(panelState.summaryMarkdown),
+    slidesEnabled: slidesEnabledValue,
+    slidesOcrEnabled: slidesOcrEnabledValue,
+    autoSummarize: autoValue,
+    slidesBusy,
+    mediaAvailable,
+    slidesLayout: slidesLayoutValue,
+    summarizeVideoLabel,
+    summarizePageWords,
+    summarizeVideoDurationSeconds,
+    activeTabUrl,
+    currentSourceUrl: panelState.currentSource?.url ?? null,
+  }),
+  setInputMode: (value) => {
+    inputMode = value;
+  },
+  setInputModeOverride: (value) => {
+    inputModeOverride = value;
+  },
+  setSlidesEnabled: (value) => {
+    slidesEnabledValue = value;
+  },
+  setSlidesLayoutValue: (value) => {
+    slidesLayoutValue = value;
+  },
+  patchSettings,
+  loadSettings,
+  showSlideNotice: (message) => {
+    showSlideNotice(message);
+  },
+  hideSlideNotice,
+  setSlidesBusy,
+  stopSlidesStream,
+  maybeApplyPendingSlidesSummary,
+  maybeStartPendingSlidesForUrl,
+  sendSummarize: (opts) => {
+    sendSummarize(opts);
+  },
+  resolveActiveSlidesRunId,
+  startSlidesStreamForRunId,
+  startSlidesSummaryStreamForRunId: (runId, url) => {
+    startSlidesSummaryStreamForRunId(runId, url ?? null);
+  },
+  renderMarkdownDisplay,
+  renderInlineSlidesFallback: () => {
+    renderInlineSlides(renderMarkdownHostEl, { fallback: true });
+  },
+  queueSlidesRender,
+  applySlidesRendererLayout: () => {
+    slidesRenderer?.applyLayout();
+  },
+});
 
 function seedPlannedSlidesForRun(run: RunStart) {
   const durationSeconds = summarizeVideoDurationSeconds;
