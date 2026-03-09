@@ -346,6 +346,14 @@ test.describe("youtube e2e", () => {
         await expect
           .poll(async () => (await getPanelSlideDescriptions(page)).length, { timeout: 600_000 })
           .toBeGreaterThan(0);
+        await page.evaluate(() => {
+          const hooks = (
+            window as typeof globalThis & {
+              __summarizeTestHooks?: { forceRenderSlides?: () => number | void };
+            }
+          ).__summarizeTestHooks;
+          hooks?.forceRenderSlides?.();
+        });
         const panelSlides = (await getPanelSlideDescriptions(page))
           .map(([index, text]) => ({ index, text: normalizeWhitespace(text) }))
           .sort((a, b) => a.index - b.index);
