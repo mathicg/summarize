@@ -3,7 +3,7 @@ import { startSpinner } from "../../../tty/spinner.js";
 import type { createThemeRenderer } from "../../../tty/theme.js";
 import { createWebsiteProgress } from "../../../tty/website-progress.js";
 import { createUrlProgressStatus } from "./progress-status.js";
-import type { UrlFlowContext } from "./types.js";
+import { composeUrlFlowHooks, type UrlFlowContext } from "./types.js";
 
 function isMissingSlidesDependencyError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -94,16 +94,19 @@ export function createUrlFlowProgress({
     process.once("SIGINT", handleSigint);
     process.once("SIGTERM", handleSigterm);
   }
-  if (!hooks.onSlidesProgress && flags.progressEnabled) {
-    hooks.onSlidesProgress = (text: string) => {
-      const match = text.match(/(\d{1,3})%/);
-      const percent = match ? Number(match[1]) : null;
-      progressStatus.setSlides(
-        renderStatusFromText(text),
-        Number.isFinite(percent) && percent !== null ? percent : null,
-      );
-    };
-  }
+  const progressHooks =
+    !hooks.onSlidesProgress && flags.progressEnabled
+      ? composeUrlFlowHooks(hooks, {
+          onSlidesProgress: (text: string) => {
+            const match = text.match(/(\d{1,3})%/);
+            const percent = match ? Number(match[1]) : null;
+            progressStatus.setSlides(
+              renderStatusFromText(text),
+              Number.isFinite(percent) && percent !== null ? percent : null,
+            );
+          },
+        })
+      : hooks;
   const websiteProgress = createWebsiteProgress({
     enabled: flags.progressEnabled,
     spinner,
@@ -126,6 +129,7 @@ export function createUrlFlowProgress({
 
   return {
     progressStatus,
+    hooks: progressHooks,
     pauseProgress: () => {
       spinner.pause();
       return () => spinner.resume();

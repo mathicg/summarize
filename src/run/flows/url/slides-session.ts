@@ -8,7 +8,7 @@ import {
 } from "../../../slides/index.js";
 import { writeVerbose } from "../../logging.js";
 import { createSlidesTerminalOutput, type SlidesTerminalOutput } from "./slides-output.js";
-import type { UrlFlowContext } from "./types.js";
+import { composeUrlFlowHooks, type UrlFlowContext } from "./types.js";
 
 type ProgressStatusLike = {
   clearSlides: () => void;
@@ -76,30 +76,29 @@ export function createUrlSlidesSession({
       : null,
   });
 
-  if (slidesOutput) {
-    const existingSlidesExtracted = hooks.onSlidesExtracted;
-    const existingSlidesDone = hooks.onSlidesDone;
-    const existingSlideChunk = hooks.onSlideChunk;
-    hooks.onSlidesExtracted = (value) => {
-      existingSlidesExtracted?.(value);
-      slidesOutput.onSlidesExtracted(value);
-    };
-    hooks.onSlidesDone = (result) => {
-      existingSlidesDone?.(result);
-      progressStatus.clearSlides();
-      slidesOutput.onSlidesDone(result);
-    };
-    hooks.onSlideChunk = (chunk) => {
-      existingSlideChunk?.(chunk);
-      slidesOutput.onSlideChunk(chunk);
-    };
-  }
+  const sessionHooks = slidesOutput
+    ? composeUrlFlowHooks(hooks, {
+        onSlidesExtracted: (value) => {
+          hooks.onSlidesExtracted?.(value);
+          slidesOutput.onSlidesExtracted(value);
+        },
+        onSlidesDone: (result) => {
+          hooks.onSlidesDone?.(result);
+          progressStatus.clearSlides();
+          slidesOutput.onSlidesDone(result);
+        },
+        onSlideChunk: (chunk) => {
+          hooks.onSlideChunk?.(chunk);
+          slidesOutput.onSlideChunk(chunk);
+        },
+      })
+    : hooks;
 
   const markSlidesDone = (result: { ok: boolean; error?: string | null }) => {
     if (slidesDone) return;
     slidesDone = true;
     progressStatus.clearSlides();
-    hooks.onSlidesDone?.(result);
+    sessionHooks.onSlidesDone?.(result);
   };
 
   const runSlidesExtraction = async (): Promise<SlideExtractionResult | null> => {
@@ -133,8 +132,8 @@ export function createUrlSlidesSession({
           );
           slidesExtracted = validated;
           resolveTimeline(validated);
-          ctx.hooks.onSlidesExtracted?.(slidesExtracted);
-          ctx.hooks.onSlidesProgress?.("Slides: cached 100%");
+          sessionHooks.onSlidesExtracted?.(slidesExtracted);
+          sessionHooks.onSlidesProgress?.("Slides: cached 100%");
           return slidesExtracted;
         }
         writeVerbose(
@@ -148,7 +147,8 @@ export function createUrlSlidesSession({
       if (flags.progressEnabled) {
         progressStatus.setSlides(renderStatus("Extracting slides"));
       }
-      ctx.hooks.onSlidesProgress?.("Slides: extracting");
+      const activeSlidesProgress = sessionHooks.onSlidesProgress;
+      activeSlidesProgress?.("Slides: extracting");
       const onSlidesLog = (message: string) => {
         writeVerbose(
           io.stderr,
@@ -170,18 +170,18 @@ export function createUrlSlidesSession({
         ffmpegPath: null,
         tesseractPath: null,
         hooks: {
-          onSlideChunk: (chunk) => ctx.hooks.onSlideChunk?.(chunk),
+          onSlideChunk: (chunk) => sessionHooks.onSlideChunk?.(chunk),
           onSlidesTimeline: (timeline) => {
             resolveTimeline(timeline);
-            ctx.hooks.onSlidesExtracted?.(timeline);
+            sessionHooks.onSlidesExtracted?.(timeline);
           },
-          onSlidesProgress: ctx.hooks.onSlidesProgress ?? undefined,
+          onSlidesProgress: activeSlidesProgress ?? undefined,
           onSlidesLog,
         },
       });
       if (slidesExtracted) {
-        ctx.hooks.onSlidesExtracted?.(slidesExtracted);
-        ctx.hooks.onSlidesProgress?.(
+        sessionHooks.onSlidesExtracted?.(slidesExtracted);
+        sessionHooks.onSlidesProgress?.(
           `Slides: done (${slidesExtracted.slides.length.toString()} slides) 100%`,
         );
         if (slidesCacheKey && cacheStore) {

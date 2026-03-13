@@ -124,11 +124,12 @@ describe("url flow progress", () => {
     expect(once).toHaveBeenCalledWith("SIGTERM", expect.any(Function));
     expect(osc.setIndeterminate).toHaveBeenCalledWith("Fetching website");
 
-    ctx.hooks.onSlidesProgress?.("Slides: detecting scenes 35%");
+    expect(ctx.hooks.onSlidesProgress).toBeUndefined();
+    progress.hooks.onSlidesProgress?.("Slides: detecting scenes 35%");
     expect(spinner.setText).toHaveBeenCalledWith("<l>Slides</l><d>: detecting scenes 35%</d>");
     expect(osc.setPercent).toHaveBeenCalledWith("Slides", 35);
 
-    ctx.hooks.onSlidesProgress?.("Slides: extracting");
+    progress.hooks.onSlidesProgress?.("Slides: extracting");
     expect(osc.setIndeterminate).toHaveBeenCalledWith("Slides");
 
     const resume = progress.pauseProgress();

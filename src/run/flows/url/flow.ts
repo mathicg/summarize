@@ -91,6 +91,7 @@ export async function runUrlFlow({
   const {
     handleSigint,
     handleSigterm,
+    hooks: progressHooks,
     pauseProgress,
     progressStatus,
     renderStatus,
@@ -102,25 +103,27 @@ export async function runUrlFlow({
     styleLabel,
     websiteProgress,
   } = createUrlFlowProgress({ ctx, theme });
+  const flowCtx = progressHooks === hooks ? ctx : { ...ctx, hooks: progressHooks };
+  const activeHooks = flowCtx.hooks;
 
   const extractionSession = createUrlExtractionSession({
-    ctx,
+    ctx: flowCtx,
     markdown: {
       convertHtmlToMarkdown: markdown.convertHtmlToMarkdown,
       effectiveMarkdownMode: markdown.effectiveMarkdownMode,
       markdownRequested: markdown.markdownRequested,
     },
     onProgress:
-      websiteProgress || hooks.onLinkPreviewProgress
+      websiteProgress || activeHooks.onLinkPreviewProgress
         ? (event) => {
             websiteProgress?.onProgress(event);
-            hooks.onLinkPreviewProgress?.(event);
+            activeHooks.onLinkPreviewProgress?.(event);
           }
         : null,
   });
 
   const pauseProgressLine = pauseProgress;
-  hooks.setClearProgressBeforeStdout(pauseProgressLine);
+  activeHooks.setClearProgressBeforeStdout(pauseProgressLine);
   try {
     let extracted = await extractionSession.fetchInitialExtract(url);
     let extractionUi = deriveExtractionUi(extracted);
@@ -148,7 +151,7 @@ export async function runUrlFlow({
     };
 
     const slidesSession = createUrlSlidesSession({
-      ctx,
+      ctx: flowCtx,
       url,
       extracted,
       cacheStore: extractionSession.cacheStore,
@@ -224,7 +227,7 @@ export async function runUrlFlow({
       });
     }
 
-    hooks.onExtracted?.(extracted);
+    activeHooks.onExtracted?.(extracted);
 
     let slidesForPrompt: SlideExtractionResult | null = null;
     if (slidesSession.slidesTimelinePromise) {
@@ -250,7 +253,7 @@ export async function runUrlFlow({
     });
     const transcriptionCostLabel =
       typeof transcriptionCostUsd === "number" ? `txcost=${formatUSD(transcriptionCostUsd)}` : null;
-    hooks.setTranscriptionCost(transcriptionCostUsd, transcriptionCostLabel);
+    activeHooks.setTranscriptionCost(transcriptionCostUsd, transcriptionCostLabel);
 
     if (flags.extractMode) {
       // Apply transcript→markdown conversion if requested
@@ -297,13 +300,13 @@ export async function runUrlFlow({
     }
 
     const onModelChosen = (modelId: string) => {
-      hooks.onModelChosen?.(modelId);
+      activeHooks.onModelChosen?.(modelId);
       if (!flags.progressEnabled) return;
       progressStatus.setSummary(formatSummaryProgress(modelId), "Summarizing");
     };
 
     await summarizeExtractedUrl({
-      ctx,
+      ctx: flowCtx,
       url,
       extracted,
       extractionUi,
@@ -319,7 +322,7 @@ export async function runUrlFlow({
       process.off("SIGINT", handleSigint);
       process.off("SIGTERM", handleSigterm);
     }
-    hooks.clearProgressIfCurrent(pauseProgressLine);
+    activeHooks.clearProgressIfCurrent(pauseProgressLine);
     stopProgress();
   }
 }

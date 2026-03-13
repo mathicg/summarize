@@ -192,6 +192,16 @@ export function createUrlFlowHooks(options: {
   };
 }
 
+export function composeUrlFlowHooks(
+  base: UrlFlowHooks,
+  overrides: Partial<UrlFlowHooks>,
+): UrlFlowHooks {
+  return {
+    ...base,
+    ...overrides,
+  };
+}
+
 export function createUrlFlowContext(options: {
   io: UrlFlowIo;
   flags: UrlFlowFlags;
